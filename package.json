@@ -1,0 +1,16 @@
+{
+  "name": "event-hub-pipeline",
+  "version": "1.0.0",
+  "description": "山口県イベント情報収集パイプライン",
+  "type": "module",
+  "scripts": {
+    "pipeline": "node src/pipeline.js",
+    "sites-only": "node src/pipeline.js --sites-only",
+    "instagram": "node src/pipeline.js --instagram-only",
+    "export": "node src/pipeline.js --export-only"
+  },
+  "dependencies": {
+    "apify-client": "^2.11.0",
+    "playwright": "^1.58.0"
+  }
+}

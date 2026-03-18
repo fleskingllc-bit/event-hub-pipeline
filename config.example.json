@@ -1,0 +1,33 @@
+{
+  "google": {
+    "credentialsPath": "~/.config/google-api/credentials.json",
+    "tokenPath": "~/.config/google-api/token.json",
+    "spreadsheetId": ""
+  },
+  "gemini": {
+    "apiKey": "",
+    "model": "gemini-2.0-flash"
+  },
+  "apify": {
+    "apiToken": ""
+  },
+  "instagram": {
+    "accounts": ["yamaguchi_spot"],
+    "hashtags": [
+      "山口マルシェ",
+      "周南マルシェ",
+      "下関マルシェ",
+      "防府マルシェ",
+      "山口イベント",
+      "光市イベント",
+      "周南イベント"
+    ]
+  },
+  "scraping": {
+    "requestIntervalMs": 3000,
+    "maxRetries": 3
+  },
+  "output": {
+    "prototypeDataPath": "~/event-hub-prototype/public/data.json"
+  }
+}

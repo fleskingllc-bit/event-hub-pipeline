@@ -1,0 +1,7 @@
+node_modules/
+config.json
+data/raw/
+data/state.json
+data/geocache.json
+output/
+logs/
