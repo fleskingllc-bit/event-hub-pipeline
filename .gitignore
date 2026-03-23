@@ -1,7 +1,10 @@
 node_modules/
 config.json
+secrets.json
 data/raw/
 data/state.json
 data/geocache.json
 output/
 logs/
+.env
+data/ig-session/

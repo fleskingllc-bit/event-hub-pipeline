@@ -1,10 +1,11 @@
-import { writeFileSync, copyFileSync, existsSync, mkdirSync } from 'fs';
+import { writeFileSync, readFileSync, copyFileSync, existsSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { homedir } from 'os';
 import { log } from '../lib/logger.js';
 
 const ROOT = new URL('../../', import.meta.url).pathname;
 const OUTPUT_PATH = join(ROOT, 'output', 'data.json');
+const IMAGE_LINKS_PATH = join(ROOT, 'data', 'image-links.json');
 
 /**
  * Export approved events from Sheets to data.json
@@ -19,6 +20,15 @@ export async function exportToJson(storage, config) {
   // Filter approved only
   const approvedEvents = events.filter((e) => e.status === 'approved');
   const approvedExhibitors = exhibitors.filter((e) => e.status === 'approved');
+
+  // Load image links if available
+  let imageLinks = {};
+  try {
+    if (existsSync(IMAGE_LINKS_PATH)) {
+      imageLinks = JSON.parse(readFileSync(IMAGE_LINKS_PATH, 'utf-8'));
+      log.info(`Loaded image links for ${Object.keys(imageLinks).length} events`);
+    }
+  } catch { /* ignore */ }
 
   // Transform events to UI format
   const uiEvents = approvedEvents.map((e) => ({
@@ -35,6 +45,7 @@ export async function exportToJson(storage, config) {
     description: e.description,
     exhibitorIds: e.exhibitorIds ? JSON.parse(e.exhibitorIds) : [],
     imageCount: parseInt(e.imageCount) || 0,
+    imageUrls: imageLinks[e.id] || [],
     source: e.source,
     sourceUrl: e.sourceUrl,
   }));

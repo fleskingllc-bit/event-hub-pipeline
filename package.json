@@ -5,9 +5,15 @@
   "type": "module",
   "scripts": {
     "pipeline": "node src/pipeline.js",
+    "pipeline:auto": "node src/pipeline.js --auto-approve",
     "sites-only": "node src/pipeline.js --sites-only",
     "instagram": "node src/pipeline.js --instagram-only",
-    "export": "node src/pipeline.js --export-only"
+    "export": "node src/pipeline.js --export-only",
+    "outreach:build": "node src/build-outreach-list.mjs",
+    "outreach:send": "node src/send-outreach.mjs",
+    "outreach:auto": "node src/send-outreach-auto.mjs",
+    "outreach:login": "node src/send-outreach-auto.mjs --login",
+    "outreach:dry-run": "node src/send-outreach-auto.mjs --dry-run"
   },
   "dependencies": {
     "apify-client": "^2.11.0",

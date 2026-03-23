@@ -9,6 +9,18 @@ const RAW_DIR = join(ROOT, 'data', 'raw', 'instagram');
 mkdirSync(RAW_DIR, { recursive: true });
 
 /**
+ * Get today's rotation group (A or B, alternating daily)
+ */
+function getTodayGroup(config) {
+  const rotation = config.instagram.rotation;
+  if (!rotation?.enabled) return null;
+
+  const dayOfYear = Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0)) / 86400000);
+  const groupKey = dayOfYear % 2 === 0 ? 'A' : 'B';
+  return rotation.groups[groupKey];
+}
+
+/**
  * Scrape Instagram posts via Apify
  */
 export async function scrapeInstagram(config) {
@@ -20,10 +32,20 @@ export async function scrapeInstagram(config) {
   log.info('=== Scraping Instagram via Apify ===');
   const client = new ApifyClient({ token: config.apify.apiToken });
 
+  // Determine today's hashtags and accounts (rotation or all)
+  const group = getTodayGroup(config);
+  const hashtags = group ? group.hashtags : config.instagram.hashtags;
+  const accounts = group ? group.accounts : config.instagram.accounts;
+
+  if (group) {
+    const groupKey = hashtags === config.instagram.rotation.groups.A?.hashtags ? 'A' : 'B';
+    log.info(`Rotation group: ${groupKey} (${hashtags.length} hashtags, ${accounts.length} profiles)`);
+  }
+
   const results = [];
 
   // 1. Hashtag scraping
-  for (const hashtag of config.instagram.hashtags) {
+  for (const hashtag of hashtags) {
     try {
       log.info(`Scraping hashtag: #${hashtag}`);
       const posts = await scrapeHashtag(client, hashtag);
@@ -34,7 +56,7 @@ export async function scrapeInstagram(config) {
   }
 
   // 2. Profile scraping
-  for (const account of config.instagram.accounts) {
+  for (const account of accounts) {
     try {
       log.info(`Scraping profile: @${account}`);
       const posts = await scrapeProfile(client, account);

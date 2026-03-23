@@ -21,6 +21,7 @@ import { deduplicateEvents } from './ai/deduplicator.js';
 import { geocode } from './geo/geocoder.js';
 import { mapAreaFromCoords, mapAreaFromAddress } from './geo/area-mapper.js';
 import { exportToJson } from './storage/json-export.js';
+import { buildOutreachList } from './build-outreach-list.mjs';
 import { createRateLimiter } from './lib/rate-limiter.js';
 import { randomUUID } from 'crypto';
 
@@ -28,6 +29,7 @@ const args = process.argv.slice(2);
 const sitesOnly = args.includes('--sites-only');
 const instagramOnly = args.includes('--instagram-only');
 const exportOnly = args.includes('--export-only');
+const autoApprove = args.includes('--auto-approve');
 
 async function main() {
   const config = loadConfig();
@@ -240,29 +242,38 @@ JSON形式で出力:
     description: (e.description || '').slice(0, 500),
     exhibitorIds: JSON.stringify([]),
     imageCount: String((e.images || []).length),
-    status: 'pending_review',
+    status: autoApprove ? 'approved' : 'pending_review',
     source: e.source || '',
     sourceUrl: e.sourceUrl || '',
     createdAt: new Date().toISOString(),
   }));
 
-  // Write exhibitors from Instagram extractions
+  // Write exhibitors from Instagram extractions and link to events
   const exhibitorRows = [];
-  for (const event of deduped) {
+  for (let i = 0; i < deduped.length; i++) {
+    const event = deduped[i];
     if (event.exhibitors?.length) {
+      const ids = [];
       for (const ex of event.exhibitors) {
+        const exId = `exh_${runId}_${String(exhibitorRows.length).padStart(3, '0')}`;
+        ids.push(exId);
+        // Skip junk names (category names as exhibitor names)
+        const name = (ex.name || '').trim();
+        if (!name || name.length <= 1) continue;
         exhibitorRows.push({
-          id: `exh_${runId}_${String(exhibitorRows.length).padStart(3, '0')}`,
-          name: ex.name || '',
+          id: exId,
+          name,
           category: ex.category || '',
           categoryTag: ex.category || '',
           instagram: ex.instagram || '',
-          description: ex.menu || '',
-          menu: JSON.stringify([]),
-          status: 'pending_review',
+          description: ex.description || ex.menu || '',
+          menu: JSON.stringify(Array.isArray(ex.menu) ? ex.menu : []),
+          status: autoApprove ? 'approved' : 'pending_review',
           createdAt: new Date().toISOString(),
         });
       }
+      // Link exhibitor IDs back to the event row
+      eventRows[i].exhibitorIds = JSON.stringify(ids);
     }
   }
 
@@ -273,6 +284,22 @@ JSON形式で出力:
   await logRun(storage, runId, startTime, eventRows.length, errors);
 
   log.info(`=== Pipeline run ${runId} complete: ${eventRows.length} events written ===`);
+
+  // Auto-export when auto-approve is on
+  if (autoApprove && eventRows.length > 0) {
+    log.info('--- Phase: Auto-export ---');
+    await exportToJson(storage, config);
+  }
+
+  // Build outreach list (always runs when auto-approve is on)
+  if (autoApprove) {
+    try {
+      log.info('--- Phase: Outreach list generation ---');
+      await buildOutreachList(storage);
+    } catch (err) {
+      log.error(`Outreach list generation failed: ${err.message}`);
+    }
+  }
 }
 
 async function logRun(storage, runId, startTime, newCount, errors) {

@@ -20,6 +20,10 @@ const HEADERS = {
   scrape_log: [
     'runId', 'source', 'startTime', 'endTime', 'newCount', 'errors', 'status',
   ],
+  outreach: [
+    'outreachId', 'exhibitorId', 'exhibitorName', 'instagram', 'eventId',
+    'eventTitle', 'eventDate', 'pageUrl', 'message', 'status', 'sentAt', 'createdAt',
+  ],
 };
 
 export class SheetsStorage extends StorageInterface {
@@ -88,6 +92,34 @@ export class SheetsStorage extends StorageInterface {
       `/values/${range}?valueInputOption=USER_ENTERED`,
       { method: 'PUT', body: JSON.stringify({ values: [[value]] }) }
     );
+  }
+
+  /** Ensure a sheet tab exists; create it + write headers if missing */
+  async ensureSheetExists(sheet) {
+    const token = await getAccessToken(this.config);
+    // Get existing sheet names
+    const meta = await this._fetch('?fields=sheets.properties.title');
+    const existing = (meta.sheets || []).map((s) => s.properties.title);
+    if (existing.includes(sheet)) return;
+
+    // Add the sheet
+    await this._fetch(':batchUpdate', {
+      method: 'POST',
+      body: JSON.stringify({
+        requests: [{ addSheet: { properties: { title: sheet } } }],
+      }),
+    });
+
+    // Write headers
+    const headers = HEADERS[sheet];
+    if (headers) {
+      const range = encodeURIComponent(`${sheet}!A1`);
+      await this._fetch(`/values/${range}?valueInputOption=RAW`, {
+        method: 'PUT',
+        body: JSON.stringify({ values: [headers] }),
+      });
+    }
+    log.info(`Created sheet tab: ${sheet}`);
   }
 
   /** Create the spreadsheet with all 4 sheets and headers */

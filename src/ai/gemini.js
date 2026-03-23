@@ -24,6 +24,31 @@ export class GeminiClient {
     return this._request(payload);
   }
 
+  /**
+   * Vision: send images + text prompt to Gemini.
+   * @param {string} prompt - text prompt
+   * @param {Array<{data: Buffer, mimeType: string}>} images - image buffers
+   */
+  async generateWithImages(prompt, images, { temperature = 0.1 } = {}) {
+    const parts = images.map((img) => ({
+      inline_data: {
+        mime_type: img.mimeType,
+        data: img.data.toString('base64'),
+      },
+    }));
+    parts.push({ text: prompt });
+
+    const payload = {
+      contents: [{ parts }],
+      generationConfig: {
+        temperature,
+        responseMimeType: 'application/json',
+      },
+    };
+
+    return this._request(payload);
+  }
+
   async _request(payload) {
     let lastError = null;
 
