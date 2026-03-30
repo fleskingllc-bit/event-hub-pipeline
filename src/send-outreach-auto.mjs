@@ -105,7 +105,7 @@ async function autoSend() {
   await storage.ensureSheetExists('outreach');
 
   const allOutreach = await storage.readAll('outreach');
-  const pending = allOutreach.filter((o) => o.status === 'pending');
+  const pending = allOutreach.filter((o) => o.status === 'pending' || o.status === 'reminder_pending');
 
   if (!pending.length) {
     log.info('Outreach auto-send: 未送信なし');
@@ -215,12 +215,13 @@ async function autoSend() {
 
         // Sheets更新
         const now = new Date().toISOString();
-        await storage.updateCell('outreach', rowNum, statusCol, 'sent');
+        const newStatus = entry.status === 'reminder_pending' ? 'reminder_sent' : 'sent';
+        await storage.updateCell('outreach', rowNum, statusCol, newStatus);
         await storage.updateCell('outreach', rowNum, sentAtCol, now);
         sentCount++;
         incrementDailySent();
 
-        log.info(`  ✅ 送信完了`);
+        log.info(`  ✅ 送信完了 (${newStatus})`);
       } catch (err) {
         log.error(`  ❌ 送信失敗: ${err.message}`);
         // エラーでも続行（次のエントリへ）

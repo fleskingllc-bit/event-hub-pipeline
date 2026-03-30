@@ -137,7 +137,7 @@ async function main() {
   await storage.ensureSheetExists('outreach');
 
   const allOutreach = await storage.readAll('outreach');
-  const pending = allOutreach.filter((o) => o.status === 'pending');
+  const pending = allOutreach.filter((o) => o.status === 'pending' || o.status === 'reminder_pending');
 
   if (!pending.length) {
     console.log('\n✅ 未送信のアウトリーチはありません');
@@ -204,11 +204,12 @@ async function main() {
 
     // Auto-mark as sent
     const now = new Date().toISOString();
-    await storage.updateCell('outreach', rowNum, statusCol, 'sent');
+    const newStatus = entry.status === 'reminder_pending' ? 'reminder_sent' : 'sent';
+    await storage.updateCell('outreach', rowNum, statusCol, newStatus);
     await storage.updateCell('outreach', rowNum, sentAtCol, now);
     sentCount++;
     incrementDailySent();
-    console.log(`  ✅ 送信済み [${sentCount}]`);
+    console.log(`  ✅ 送信済み (${newStatus}) [${sentCount}]`);
   }
 
   // Summary
