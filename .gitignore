@@ -8,3 +8,6 @@ output/
 logs/
 .env
 data/ig-session/
+tmp_props_*.json
+out/
+public/

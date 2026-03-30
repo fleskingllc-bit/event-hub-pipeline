@@ -6,20 +6,52 @@ import { log } from '../lib/logger.js';
 const ROOT = new URL('../../', import.meta.url).pathname;
 const OUTPUT_PATH = join(ROOT, 'output', 'data.json');
 const IMAGE_LINKS_PATH = join(ROOT, 'data', 'image-links.json');
+const MASTER_DB_PATH = join(ROOT, 'data', 'exhibitor-master.json');
 
 /**
  * Export approved events from Sheets to data.json
+ * Exhibitors are sourced from master DB (primary) with Sheets as fallback.
  */
 export async function exportToJson(storage, config) {
   log.info('=== Exporting approved events to JSON ===');
 
-  // Read events and exhibitors from Sheets
+  // Read events from Sheets
   const events = await storage.readAll('events');
-  const exhibitors = await storage.readAll('exhibitors');
+  // Date window: past events excluded, future capped at 3 months
+  const today = new Date().toISOString().slice(0, 10);
+  const cutoff = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const approvedEvents = events.filter((e) => e.status === 'approved' && e.date >= today && e.date <= cutoff);
+  log.info(`Date filter: ${today} ~ ${cutoff} → ${approvedEvents.length}/${events.filter(e => e.status === 'approved').length} approved events`);
 
-  // Filter approved only
-  const approvedEvents = events.filter((e) => e.status === 'approved');
-  const approvedExhibitors = exhibitors.filter((e) => e.status === 'approved');
+  // Load exhibitors from master DB (primary source)
+  let uiExhibitors = [];
+  if (existsSync(MASTER_DB_PATH)) {
+    const masterDB = JSON.parse(readFileSync(MASTER_DB_PATH, 'utf-8'));
+    uiExhibitors = masterDB.exhibitors.map((e) => ({
+      id: e.id,
+      name: e.name,
+      category: e.category || 'その他',
+      categoryTag: e.category || 'その他',
+      instagram: e.instagram || '',
+      description: e.description || '',
+      menu: Array.isArray(e.menu) ? e.menu : [],
+    }));
+    log.info(`Loaded ${uiExhibitors.length} exhibitors from master DB`);
+  } else {
+    // Fallback: read from Sheets
+    log.warn('Master DB not found, falling back to Sheets exhibitors');
+    const exhibitors = await storage.readAll('exhibitors');
+    const approvedExhibitors = exhibitors.filter((e) => e.status === 'approved');
+    uiExhibitors = approvedExhibitors.map((e) => ({
+      id: e.id,
+      name: e.name,
+      category: e.category,
+      categoryTag: e.categoryTag,
+      instagram: e.instagram,
+      description: e.description,
+      menu: e.menu ? JSON.parse(e.menu) : [],
+    }));
+  }
 
   // Load image links if available
   let imageLinks = {};
@@ -29,6 +61,20 @@ export async function exportToJson(storage, config) {
       log.info(`Loaded image links for ${Object.keys(imageLinks).length} events`);
     }
   } catch { /* ignore */ }
+
+  // Validate coordinates — flag events outside Yamaguchi bounds
+  const YG = { latMin: 33.7, latMax: 34.55, lngMin: 130.7, lngMax: 132.4 };
+  for (const e of approvedEvents) {
+    if (!e.lat || !e.lng) continue;
+    const lat = parseFloat(e.lat);
+    const lng = parseFloat(e.lng);
+    if (lat < YG.latMin || lat > YG.latMax || lng < YG.lngMin || lng > YG.lngMax) {
+      log.warn(`⚠ ${e.id} "${e.title}" has coords outside Yamaguchi: (${lat}, ${lng})`);
+    }
+  }
+
+  // Build exhibitor ID set for quick lookup
+  const masterIdSet = new Set(uiExhibitors.map(e => e.id));
 
   // Transform events to UI format
   const uiEvents = approvedEvents.map((e) => ({
@@ -43,22 +89,12 @@ export async function exportToJson(storage, config) {
     lng: e.lng ? parseFloat(e.lng) : null,
     area: e.area,
     description: e.description,
-    exhibitorIds: e.exhibitorIds ? JSON.parse(e.exhibitorIds) : [],
+    exhibitorIds: (e.exhibitorIds ? JSON.parse(e.exhibitorIds) : [])
+      .filter(id => masterIdSet.has(id)),
     imageCount: parseInt(e.imageCount) || 0,
     imageUrls: imageLinks[e.id] || [],
     source: e.source,
     sourceUrl: e.sourceUrl,
-  }));
-
-  // Transform exhibitors to UI format
-  const uiExhibitors = approvedExhibitors.map((e) => ({
-    id: e.id,
-    name: e.name,
-    category: e.category,
-    categoryTag: e.categoryTag,
-    instagram: e.instagram,
-    description: e.description,
-    menu: e.menu ? JSON.parse(e.menu) : [],
   }));
 
   const output = {

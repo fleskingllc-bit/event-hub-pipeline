@@ -1,9 +1,10 @@
 /**
- * Image linker v3:
+ * Image linker v4:
  * 1. Scan existing local images to preserve all current links
  * 2. Build shortCode→raw post index
  * 3. For IG events: find the raw post, extract ALL carousel images, download new ones
- * 4. For site events: try to match to IG posts by title/date
+ * 4.5. For site events: download images from mypl/TRYangle raw data
+ * 5. For site events without images: try to match to IG posts by title/date/area
  */
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
@@ -11,6 +12,8 @@ import { join } from 'path';
 const PROTO_DIR = '/Users/flesking/event-hub-prototype';
 const PIPELINE_DIR = '/Users/flesking/event-hub-pipeline';
 const RAW_IG_DIR = join(PIPELINE_DIR, 'data/raw/instagram');
+const RAW_MYPL_DIR = join(PIPELINE_DIR, 'data/raw/mypl');
+const RAW_TRYANGLE_DIR = join(PIPELINE_DIR, 'data/raw/tryangle');
 const IMAGE_DIR = join(PROTO_DIR, 'public/images/events');
 const LINKS_PATH = join(PIPELINE_DIR, 'data/image-links.json');
 const DATA_PATH = join(PROTO_DIR, 'public/data.json');
@@ -80,10 +83,10 @@ for (const f of rawFiles) {
 console.log(`IG posts: ${posts.length}, postId index: ${postIdMap.size}`);
 console.log(`Total IG images available: ${posts.reduce((s, p) => s + p.imageUrls.length, 0)}`);
 
-// ── 4. For IG events: find carousel images ──
+// ── 4. For IG events: download all images (single + carousel) ──
 const finalLinks = { ...existingLinks };
-let carouselExpanded = 0;
-let newCarouselImages = 0;
+let igLinked = 0;
+let newIgImages = 0;
 
 for (const ev of igEvents) {
   // Find raw post by postId from sourceUrl
@@ -102,12 +105,12 @@ for (const ev of igEvents) {
     }
   }
 
-  if (!post || post.imageUrls.length <= 1) continue;
+  if (!post || post.imageUrls.length === 0) continue;
 
   const currentCount = (finalLinks[ev.id] || []).length;
   if (post.imageUrls.length <= currentCount) continue;
 
-  // We have more images to add! Download them.
+  // Download all images (single or carousel)
   const newUrls = [...(finalLinks[ev.id] || [])];
   for (let i = currentCount; i < post.imageUrls.length; i++) {
     const filename = `${ev.id}_${i}.jpg`;
@@ -125,7 +128,7 @@ for (const ev of igEvents) {
         const buffer = Buffer.from(await res.arrayBuffer());
         writeFileSync(localPath, buffer);
         newUrls.push(webPath);
-        newCarouselImages++;
+        newIgImages++;
       }
     } catch {}
     await new Promise(r => setTimeout(r, 80));
@@ -133,16 +136,98 @@ for (const ev of igEvents) {
 
   if (newUrls.length > currentCount) {
     finalLinks[ev.id] = newUrls;
-    carouselExpanded++;
+    igLinked++;
   }
 }
 
-console.log(`\nCarousel expansion: ${carouselExpanded} events, +${newCarouselImages} new images downloaded`);
+console.log(`\nIG image linking: ${igLinked} events, +${newIgImages} new images downloaded`);
 
-// ── 5. Match site events to IG posts ──
-let siteMatched = 0;
+// ── 4.5. Site source images: download from mypl/TRYangle raw data ──
+let siteSourceLinked = 0;
+
+// Build index of raw mypl/tryangle files for fast lookup
+const rawSiteIndex = new Map(); // sourceUrl → { images: string[] }
+
+// Index mypl raw files
+if (existsSync(RAW_MYPL_DIR)) {
+  for (const f of readdirSync(RAW_MYPL_DIR).filter(f => f.endsWith('.json'))) {
+    try {
+      const raw = JSON.parse(readFileSync(join(RAW_MYPL_DIR, f), 'utf8'));
+      if (raw.sourceUrl && raw.images?.length) {
+        rawSiteIndex.set(raw.sourceUrl, { images: raw.images });
+      }
+    } catch {}
+  }
+}
+
+// Index TRYangle raw files
+if (existsSync(RAW_TRYANGLE_DIR)) {
+  for (const f of readdirSync(RAW_TRYANGLE_DIR).filter(f => f.endsWith('.json'))) {
+    try {
+      const raw = JSON.parse(readFileSync(join(RAW_TRYANGLE_DIR, f), 'utf8'));
+      const url = raw.sourceUrl || raw.link;
+      if (url && raw.images?.length) {
+        rawSiteIndex.set(url, { images: raw.images });
+      }
+    } catch {}
+  }
+}
+
+console.log(`\nSite raw index: ${rawSiteIndex.size} entries with images`);
+
 for (const ev of siteEvents) {
   if (finalLinks[ev.id]?.length > 0) continue; // already has images
+
+  // Find raw data by sourceUrl
+  const rawData = rawSiteIndex.get(ev.sourceUrl);
+  if (!rawData || !rawData.images.length) continue;
+
+  // Limit images: mypl pages are event-specific, TRYangle articles share images across events
+  const maxImages = ev.source === 'tryangle' ? 2 : 5;
+  const imagesToDownload = rawData.images.slice(0, maxImages);
+
+  const urls = [];
+  for (let i = 0; i < imagesToDownload.length; i++) {
+    const imgUrl = imagesToDownload[i];
+    if (!imgUrl || typeof imgUrl !== 'string') continue;
+
+    const filename = `${ev.id}_${i}.jpg`;
+    const localPath = join(IMAGE_DIR, filename);
+    const webPath = `/images/events/${filename}`;
+
+    if (existsSync(localPath)) {
+      urls.push(webPath);
+      continue;
+    }
+
+    try {
+      const res = await fetch(imgUrl, { signal: AbortSignal.timeout(15000) });
+      if (res.ok) {
+        const buffer = Buffer.from(await res.arrayBuffer());
+        writeFileSync(localPath, buffer);
+        urls.push(webPath);
+      }
+    } catch (err) {
+      // Some site images may be protected or expired — skip silently
+    }
+    await new Promise(r => setTimeout(r, 200));
+  }
+
+  if (urls.length > 0) {
+    finalLinks[ev.id] = urls;
+    siteSourceLinked++;
+    console.log(`  ✓ [source] "${ev.title}" → ${urls.length} imgs from ${ev.source}`);
+  }
+}
+
+console.log(`\nSite source images linked: ${siteSourceLinked} events`);
+
+// ── 5. Match site events to IG posts (relaxed threshold) ──
+const AREA_NAMES = ['周南', '下松', '光', '山口', '防府', '下関', '岩国', '萩', '長門', '宇部', '美祢', '柳井', '山陽小野田'];
+
+let siteMatched = 0;
+for (const ev of siteEvents) {
+  if (finalLinks[ev.id]?.length > 0) continue; // already has images (from source or previous)
   if (!ev.title || ev.title.length < 3) continue;
 
   const titleWords = ev.title.split(/[\s　・、。\-×「」【】()（）]+/).filter(w => w.length >= 2);
@@ -171,13 +256,19 @@ for (const ev of siteEvents) {
       if (locWords.some(w => post.caption.includes(w))) score += 2;
     }
 
+    // Area name boost
+    if (ev.area) {
+      const areaShort = ev.area.replace(/[市町村区]$/, '');
+      if (AREA_NAMES.includes(areaShort) && post.caption.includes(areaShort)) score += 1;
+    }
+
     if (matched.length >= 2 && score > bestScore) {
       bestScore = score;
       bestMatch = post;
     }
   }
 
-  if (bestMatch && bestScore >= 5) {
+  if (bestMatch && bestScore >= 4) {
     // Download images for this site event
     const urls = [];
     for (let i = 0; i < bestMatch.imageUrls.length; i++) {
@@ -200,12 +291,12 @@ for (const ev of siteEvents) {
     if (urls.length > 0) {
       finalLinks[ev.id] = urls;
       siteMatched++;
-      console.log(`  ✓ "${ev.title}" → @${bestMatch.accountName} (score:${bestScore}, ${urls.length} imgs)`);
+      console.log(`  ✓ [ig-match] "${ev.title}" → @${bestMatch.accountName} (score:${bestScore}, ${urls.length} imgs)`);
     }
   }
 }
 
-console.log(`\nSite events matched: ${siteMatched}/${siteEvents.length}`);
+console.log(`\nSite events matched to IG: ${siteMatched}/${siteEvents.filter(e => !finalLinks[e.id]?.length).length} remaining`);
 
 // ── 6. Summary & save ──
 const totalEvents = Object.keys(finalLinks).length;

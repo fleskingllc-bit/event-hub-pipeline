@@ -13,6 +13,8 @@
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { resolve } from 'path';
 import { fileURLToPath } from 'url';
+import { loadConfig } from './lib/config.js';
+import { SheetsStorage } from './storage/sheets.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const ROOT = resolve(__dirname, '..');
@@ -90,10 +92,22 @@ async function main() {
   const data = JSON.parse(readFileSync(DATA_JSON, 'utf-8'));
   const events = data.events;
 
+  // Connect to Sheets for write-back (fill blanks only)
+  let storage = null;
+  if (!dryRun) {
+    try {
+      const config = loadConfig();
+      storage = new SheetsStorage(config);
+    } catch (e) {
+      console.warn(`⚠ Sheets write-back disabled: ${e.message}`);
+    }
+  }
+
   let updated = 0;
   let newLookups = 0;
   let skipped = 0;
   let failed = 0;
+  let sheetsFilled = 0;
 
   for (const ev of events) {
     // Skip empty events
@@ -117,7 +131,7 @@ async function main() {
       continue;
     }
 
-    // Update event
+    // Update data.json
     const changed = ev.lat !== result.lat || ev.lng !== result.lng || !ev.placeId;
     if (changed) {
       ev.lat = result.lat;
@@ -128,6 +142,16 @@ async function main() {
         console.log(`  ✓ ${ev.id} | ${ev.title} → ${result.name} (${result.lat}, ${result.lng})`);
       }
     }
+
+    // Write back to Sheets (fill blanks only — never overwrite existing values)
+    if (storage && result.lat != null) {
+      const filled = await storage.fillBlanks('events', 'id', ev.id, {
+        lat: String(result.lat),
+        lng: String(result.lng),
+        area: ev.area || '',
+      });
+      if (filled.length > 0) sheetsFilled++;
+    }
   }
 
   // Save
@@ -136,6 +160,7 @@ async function main() {
   if (!dryRun) {
     writeFileSync(DATA_JSON, JSON.stringify(data, null, 2), 'utf-8');
     console.log(`\n✅ data.json updated: ${updated} events geocoded (${newLookups} new lookups, ${failed} failed, ${skipped} skipped)`);
+    if (storage) console.log(`   Sheets: ${sheetsFilled} events had blanks filled`);
   } else {
     console.log(`\n🔍 DRY RUN: would update ${updated} events (${newLookups} new lookups, ${failed} failed, ${skipped} skipped)`);
   }

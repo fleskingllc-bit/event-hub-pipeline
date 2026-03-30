@@ -34,7 +34,9 @@ export async function scrapeInstagram(config) {
 
   // Determine today's hashtags and accounts (rotation or all)
   const group = getTodayGroup(config);
-  const hashtags = group ? group.hashtags : config.instagram.hashtags;
+  const baseHashtags = group ? group.hashtags : config.instagram.hashtags;
+  const dynamicHashtags = config.instagram.dynamicHashtags || [];
+  const hashtags = [...baseHashtags, ...dynamicHashtags];
   const accounts = group ? group.accounts : config.instagram.accounts;
 
   if (group) {
@@ -101,8 +103,11 @@ function processItems(items, sourceTag) {
       continue;
     }
 
+    const shortCode = item.shortCode || item.url?.match(/\/p\/([A-Za-z0-9_-]+)/)?.[1] || '';
+
     const post = {
       postId,
+      shortCode,
       accountName: item.ownerUsername || item.owner?.username || '',
       caption: item.caption || '',
       timestamp: item.timestamp || item.takenAtTimestamp || '',

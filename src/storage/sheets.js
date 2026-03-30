@@ -94,6 +94,41 @@ export class SheetsStorage extends StorageInterface {
     );
   }
 
+  /**
+   * Fill blank cells only — never overwrite existing values.
+   * @param {string} sheet - Sheet name (e.g. 'events')
+   * @param {string} idField - Column name used as row identifier (e.g. 'id')
+   * @param {string} idValue - Value to match in idField
+   * @param {object} fields - { columnName: value } to fill if currently empty
+   * @returns {string[]} list of fields that were filled
+   */
+  async fillBlanks(sheet, idField, idValue, fields) {
+    const headers = HEADERS[sheet];
+    const rows = await this.readAll(sheet);
+    const rowIndex = rows.findIndex((r) => r[idField] === idValue);
+    if (rowIndex < 0) return [];
+
+    const row = rows[rowIndex];
+    const rowNum = rowIndex + 2; // +1 for header, +1 for 1-based
+    const filled = [];
+
+    for (const [col, value] of Object.entries(fields)) {
+      if (!value && value !== 0) continue; // skip empty new values
+      const existing = row[col];
+      if (existing && existing.trim() !== '') continue; // already has value
+      const colIndex = headers.indexOf(col);
+      if (colIndex < 0) continue;
+      const colLetter = String.fromCharCode(65 + colIndex);
+      await this.updateCell(sheet, rowNum, colLetter, String(value));
+      filled.push(col);
+    }
+
+    if (filled.length > 0) {
+      log.info(`fillBlanks: ${idValue} filled [${filled.join(', ')}]`);
+    }
+    return filled;
+  }
+
   /** Ensure a sheet tab exists; create it + write headers if missing */
   async ensureSheetExists(sheet) {
     const token = await getAccessToken(this.config);

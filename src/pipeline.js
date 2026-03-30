@@ -14,6 +14,7 @@ import { setLastRun } from './lib/state.js';
 import { SheetsStorage } from './storage/sheets.js';
 import { scrapeMypl } from './scrapers/mypl.js';
 import { scrapeTryangle } from './scrapers/tryangle.js';
+import { scrapeShunanKeizai } from './scrapers/shunan-keizai.js';
 import { scrapeInstagram } from './scrapers/apify-instagram.js';
 import { extractFromSiteData, extractFromCaption } from './ai/event-extractor.js';
 import { detectEvent } from './ai/event-detector.js';
@@ -22,8 +23,15 @@ import { geocode } from './geo/geocoder.js';
 import { mapAreaFromCoords, mapAreaFromAddress } from './geo/area-mapper.js';
 import { exportToJson } from './storage/json-export.js';
 import { buildOutreachList } from './build-outreach-list.mjs';
+import { enrichEvents } from './enrich-events.mjs';
+import { generateHeroes } from './gen-event-heroes.mjs';
+import { loadMasterDB, saveMasterDB, matchExhibitorsForEvent, matchOrRegister } from './exhibitor-matcher.mjs';
 import { createRateLimiter } from './lib/rate-limiter.js';
 import { randomUUID } from 'crypto';
+import { join } from 'path';
+import { readFileSync, existsSync } from 'fs';
+
+const ROOT = new URL('../', import.meta.url).pathname;
 
 const args = process.argv.slice(2);
 const sitesOnly = args.includes('--sites-only');
@@ -95,12 +103,16 @@ JSON形式で出力:
       "address": "山口県を含む住所",
       "area": "市名",
       "description": "200文字以内の概要",
-      "fee": "料金"
+      "fee": "料金",
+      "exhibitors": [
+        { "name": "店舗名・固有名詞", "category": "カテゴリ", "instagram": "", "description": "", "menu": [] }
+      ]
     }
   ]
 }
 
-年が不明な場合は2026年。`;
+年が不明な場合は2026年。
+exhibitorsは記事中に固有名詞の店舗名・出展者名があれば抽出。なければ空配列[]。カテゴリ名や一般名詞は不可。`;
           const { GeminiClient } = await import('./ai/gemini.js');
           const gemini = new GeminiClient(config);
           const result = await gemini.generateContent(prompt);
@@ -112,7 +124,7 @@ JSON形式で出力:
                 source: 'tryangle',
                 sourceUrl: article.link,
                 images: article.images || [],
-                exhibitors: [],
+                exhibitors: event.exhibitors || [],
               });
             }
           } else if (result.title) {
@@ -122,7 +134,7 @@ JSON形式で出力:
               source: 'tryangle',
               sourceUrl: article.link,
               images: article.images || [],
-              exhibitors: [],
+              exhibitors: result.exhibitors || [],
             });
           }
         }
@@ -133,6 +145,80 @@ JSON形式で出力:
     } catch (err) {
       log.error(`TRYangle scraping failed: ${err.message}`);
       errors.push(`tryangle: ${err.message}`);
+    }
+
+    // 周南経済新聞
+    try {
+      log.info('--- Phase: 周南経済新聞 scraping ---');
+      const keizaiRaw = await scrapeShunanKeizai(config);
+      if (keizaiRaw.length) {
+        log.info(`--- Phase: 周南経済新聞 AI extraction (${keizaiRaw.length} articles) ---`);
+        const geminiLimiter = createRateLimiter(1500);
+        const keizaiExtracted = [];
+
+        for (const article of keizaiRaw) {
+          await geminiLimiter();
+          const prompt = `以下は周南経済新聞の記事です。この記事がイベント情報を含む場合、イベント情報を抽出してください。
+イベントに関係ない記事（店舗オープン、人事、企業ニュース等）の場合は空の配列を返してください。
+複数イベントがある場合は配列で返してください。
+
+タイトル: ${article.title}
+本文: ${article.contentText}
+
+JSON形式で出力:
+{
+  "events": [
+    {
+      "title": "イベント名",
+      "date": "YYYY-MM-DD",
+      "dateEnd": "",
+      "dayOfWeek": "",
+      "time": "HH:MM-HH:MM",
+      "location": "会場名",
+      "address": "山口県を含む住所",
+      "area": "市名",
+      "description": "200文字以内の概要",
+      "fee": "料金",
+      "exhibitors": [
+        { "name": "店舗名・固有名詞", "category": "カテゴリ", "instagram": "", "description": "", "menu": [] }
+      ]
+    }
+  ]
+}
+
+年が不明な場合は2026年。
+exhibitorsは記事中に固有名詞の店舗名・出展者名があれば抽出。なければ空配列[]。カテゴリ名や一般名詞は不可。`;
+          const { GeminiClient } = await import('./ai/gemini.js');
+          const gemini = new GeminiClient(config);
+          const result = await gemini.generateContent(prompt);
+
+          if (result.events && Array.isArray(result.events)) {
+            for (const event of result.events) {
+              keizaiExtracted.push({
+                ...event,
+                source: 'shunan_keizai',
+                sourceUrl: article.sourceUrl,
+                images: article.images || [],
+                exhibitors: event.exhibitors || [],
+              });
+            }
+          } else if (result.title) {
+            keizaiExtracted.push({
+              ...result,
+              source: 'shunan_keizai',
+              sourceUrl: article.sourceUrl,
+              images: article.images || [],
+              exhibitors: result.exhibitors || [],
+            });
+          }
+        }
+
+        allExtracted.push(...keizaiExtracted);
+        log.info(`周南経済新聞 extracted: ${keizaiExtracted.length} events`);
+      }
+    } catch (err) {
+      log.error(`Shunan Keizai scraping failed: ${err.message}`);
+      errors.push(`shunan_keizai: ${err.message}`);
     }
   }
 
@@ -175,9 +261,14 @@ JSON形式で出力:
               igEvents.push({
                 ...extracted,
                 source: 'instagram',
-                sourceUrl: `https://www.instagram.com/p/${post.postId}/`,
+                sourceUrl: post.shortCode
+                  ? `https://www.instagram.com/p/${post.shortCode}/`
+                  : `https://www.instagram.com/p/${post.postId}/`,
                 images: post.imageUrls,
                 exhibitors: extracted.exhibitors || [],
+                // Carry posting account + caption for exhibitor enrichment
+                _postingAccount: (post.accountName || '').toLowerCase(),
+                _caption: post.caption || '',
               });
             }
           }
@@ -211,7 +302,8 @@ JSON形式で出力:
   log.info('--- Phase: Geocoding ---');
   for (const event of deduped) {
     if (event.address && (!event.lat || !event.lng)) {
-      const geo = await geocode(event.address);
+      const query = [event.location, event.address].filter(Boolean).join(' ');
+      const geo = await geocode(query);
       if (geo) {
         event.lat = geo.lat;
         event.lng = geo.lng;
@@ -248,34 +340,135 @@ JSON形式で出力:
     createdAt: new Date().toISOString(),
   }));
 
-  // Write exhibitors from Instagram extractions and link to events
+  // --- Exhibitor matching via Master DB ---
+  const masterPath = join(ROOT, 'data', 'exhibitor-master.json');
+  let masterDB;
+  if (existsSync(masterPath)) {
+    masterDB = loadMasterDB();
+    log.info(`Loaded exhibitor master DB: ${masterDB.exhibitors.length} records`);
+  } else {
+    masterDB = { exhibitors: [], idMapping: {}, version: 1, builtAt: new Date().toISOString(), sourceCount: 0 };
+    log.info('No master DB found — will create entries from scratch');
+  }
+
+  // Media accounts (NOT exhibitors)
+  const mediaAccounts = new Set((config.instagram?.accounts || []).map(a => a.toLowerCase()));
+
   const exhibitorRows = [];
+  const newExhibitorCount = { matched: 0, added: 0, ownerRegistered: 0, mentionRegistered: 0 };
+
   for (let i = 0; i < deduped.length; i++) {
     const event = deduped[i];
+    const ids = [];
+
+    // --- A. Gemini-extracted exhibitors (all sources) ---
     if (event.exhibitors?.length) {
-      const ids = [];
-      for (const ex of event.exhibitors) {
-        const exId = `exh_${runId}_${String(exhibitorRows.length).padStart(3, '0')}`;
-        ids.push(exId);
-        // Skip junk names (category names as exhibitor names)
+      // Extract @mentions from IG caption for enrichment
+      let captionMentions = [];
+      if (event.source === 'instagram') {
+        const caption = event._caption || '';
+        captionMentions = (caption.match(/@[\w.]+/g) || []).map(m => m.toLowerCase());
+      }
+
+      const enriched = event.exhibitors.map(ex => {
         const name = (ex.name || '').trim();
-        if (!name || name.length <= 1) continue;
+        let instagram = (ex.instagram || '').trim();
+        if (!instagram && captionMentions.length > 0) {
+          const nameLower = name.toLowerCase().replace(/[\s　]/g, '');
+          const matched = captionMentions.find(m => {
+            const mention = m.replace('@', '').replace(/[._]/g, '');
+            return mention.includes(nameLower) || nameLower.includes(mention);
+          });
+          if (matched) instagram = matched;
+        }
+        return { ...ex, name, instagram };
+      });
+
+      const prevCount = masterDB.exhibitors.length;
+      const geminiIds = matchExhibitorsForEvent(enriched, masterDB);
+      const addedThisEvent = masterDB.exhibitors.length - prevCount;
+      newExhibitorCount.matched += geminiIds.length - addedThisEvent;
+      newExhibitorCount.added += addedThisEvent;
+      for (const id of geminiIds) {
+        if (!ids.includes(id)) ids.push(id);
+      }
+    }
+
+    // --- B. IG posting account → exhibitor (skip media accounts) ---
+    if (event.source === 'instagram') {
+      const postingAccount = event._postingAccount || '';
+      if (postingAccount && !mediaAccounts.has(postingAccount)) {
+        const prevCount = masterDB.exhibitors.length;
+        const ownerId = matchOrRegister({
+          name: postingAccount,
+          instagram: postingAccount,
+          category: '',
+          description: '',
+        }, masterDB);
+        if (ownerId && !ids.includes(ownerId)) {
+          ids.push(ownerId);
+          if (masterDB.exhibitors.length > prevCount) newExhibitorCount.ownerRegistered++;
+        }
+      }
+
+      // --- C. @mentions from caption → exhibitors ---
+      const caption = event._caption || '';
+      const mentions = (caption.match(/@[\w.]{2,}/g) || [])
+        .map(m => m.toLowerCase())
+        .filter((v, i, a) => a.indexOf(v) === i); // dedupe
+
+      for (const mention of mentions) {
+        const handle = mention.replace(/^@/, '');
+        if (mediaAccounts.has(handle)) continue;
+        if (handle === (event._postingAccount || '')) continue;
+
+        const prevCount = masterDB.exhibitors.length;
+        const mentionId = matchOrRegister({
+          name: handle,
+          instagram: handle,
+          category: '',
+          description: '',
+        }, masterDB);
+        if (mentionId && !ids.includes(mentionId)) {
+          ids.push(mentionId);
+          if (masterDB.exhibitors.length > prevCount) newExhibitorCount.mentionRegistered++;
+        }
+      }
+    }
+
+    // Link master IDs to event row
+    if (ids.length > 0) {
+      eventRows[i].exhibitorIds = JSON.stringify(ids);
+    }
+
+    // Also write to Sheets as log (using master IDs)
+    for (const id of ids) {
+      const masterRec = masterDB.exhibitors.find(m => m.id === id);
+      if (masterRec) {
         exhibitorRows.push({
-          id: exId,
-          name,
-          category: ex.category || '',
-          categoryTag: ex.category || '',
-          instagram: ex.instagram || '',
-          description: ex.description || ex.menu || '',
-          menu: JSON.stringify(Array.isArray(ex.menu) ? ex.menu : []),
+          id: masterRec.id,
+          name: masterRec.name,
+          category: masterRec.category || '',
+          categoryTag: masterRec.category || '',
+          instagram: masterRec.instagram || '',
+          description: masterRec.description || '',
+          menu: JSON.stringify(Array.isArray(masterRec.menu) ? masterRec.menu : []),
           status: autoApprove ? 'approved' : 'pending_review',
           createdAt: new Date().toISOString(),
         });
       }
-      // Link exhibitor IDs back to the event row
-      eventRows[i].exhibitorIds = JSON.stringify(ids);
     }
+
+    // Clean up temp fields
+    delete event._postingAccount;
+    delete event._caption;
   }
+
+  log.info(`Exhibitor matching: ${newExhibitorCount.matched} matched, ${newExhibitorCount.added} new (Gemini), ${newExhibitorCount.ownerRegistered} posting accounts, ${newExhibitorCount.mentionRegistered} @mentions`);
+
+  // Save updated master DB
+  saveMasterDB(masterDB);
+  log.info(`Master DB saved: ${masterDB.exhibitors.length} total exhibitors`);
 
   if (eventRows.length) await storage.appendRows('events', eventRows);
   if (exhibitorRows.length) await storage.appendRows('exhibitors', exhibitorRows);
@@ -288,7 +481,37 @@ JSON形式で出力:
   // Auto-export when auto-approve is on
   if (autoApprove && eventRows.length > 0) {
     log.info('--- Phase: Auto-export ---');
-    await exportToJson(storage, config);
+    const exported = await exportToJson(storage, config);
+
+    // Generate hero images for new events
+    if (exported) {
+      try {
+        log.info('--- Phase: Hero image generation ---');
+        const heroResult = await generateHeroes({
+          events: exported.events,
+          exhibitors: exported.exhibitors,
+          log: (msg) => log.info(msg),
+        });
+        if (heroResult.ok > 0) {
+          log.info(`Generated ${heroResult.ok} new hero images`);
+        }
+      } catch (err) {
+        log.error(`Hero generation failed: ${err.message}`);
+      }
+    }
+  }
+
+  // Enrich: generate dynamic hashtags for next run
+  if (autoApprove) {
+    try {
+      log.info('--- Phase: Event enrichment (dynamic hashtags) ---');
+      const enrichResult = await enrichEvents();
+      if (enrichResult.added > 0) {
+        log.info(`Added ${enrichResult.added} dynamic hashtags for next run`);
+      }
+    } catch (err) {
+      log.error(`Event enrichment failed: ${err.message}`);
+    }
   }
 
   // Build outreach list (always runs when auto-approve is on)
