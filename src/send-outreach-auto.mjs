@@ -97,6 +97,18 @@ async function setupLogin() {
   console.log('\n✅ セッション保存完了。次回から自動送信できます。');
 }
 
+/** デプロイ済みdata.jsonからイベントID一覧を取得 */
+async function fetchLiveEventIds(baseUrl) {
+  try {
+    const res = await fetch(`${baseUrl}/data.json`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return new Set((data.events || []).map((e) => e.id));
+  } catch {
+    return null;
+  }
+}
+
 /** 自動DM送信 */
 async function autoSend() {
   const config = loadConfig();
@@ -122,8 +134,29 @@ async function autoSend() {
     return;
   }
 
-  const batch = pending.slice(0, remaining);
-  log.info(`Outreach auto-send: ${batch.length}件送信開始${dryRun ? ' (dry-run)' : ''}`);
+  // デプロイ済みイベントページの存在確認
+  const igConfig = config.igPosting || {};
+  const netlifyBaseUrl = igConfig.netlifyBaseUrl || 'https://machi-event-cho.netlify.app';
+  const liveEventIds = await fetchLiveEventIds(netlifyBaseUrl);
+  if (!liveEventIds) {
+    log.warn('Outreach auto-send: Netlify data.json 取得失敗 — イベントページ確認なしで続行');
+  }
+
+  // イベントページが存在しないエントリを除外
+  const verified = pending.filter((entry) => {
+    if (!liveEventIds) return true; // 取得失敗時はスキップしない
+    if (liveEventIds.has(entry.eventId)) return true;
+    log.warn(`  ⏭️ スキップ: ${entry.eventTitle} (@${entry.instagram}) — イベントページが未デプロイ`);
+    return false;
+  });
+
+  if (!verified.length) {
+    log.info('Outreach auto-send: 送信可能なエントリなし（イベントページ未デプロイ）');
+    return;
+  }
+
+  const batch = verified.slice(0, remaining);
+  log.info(`Outreach auto-send: ${batch.length}件送信開始${dryRun ? ' (dry-run)' : ''}（${pending.length - verified.length}件はページ未デプロイでスキップ）`);
 
   // Launch browser with saved session
   const browser = await chromium.launchPersistentContext(SESSION_DIR, {
