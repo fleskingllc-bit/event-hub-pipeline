@@ -17,8 +17,8 @@ export async function exportToJson(storage, config) {
 
   // Read events from Sheets
   const events = await storage.readAll('events');
-  // Date window: keep events up to 7 days past (outreach/ページ閲覧用), future capped at 3 months
-  const pastKeep = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  // Date window: keep events up to 30 days past (outreach/ページ閲覧用), future capped at 3 months
+  const pastKeep = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const cutoff = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const approvedEvents = events.filter((e) => e.status === 'approved' && e.date >= pastKeep && e.date <= cutoff);
   log.info(`Date filter: ${pastKeep} ~ ${cutoff} → ${approvedEvents.length}/${events.filter(e => e.status === 'approved').length} approved events`);
