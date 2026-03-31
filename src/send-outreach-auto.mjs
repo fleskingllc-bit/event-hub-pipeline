@@ -142,12 +142,20 @@ async function autoSend() {
     log.warn('Outreach auto-send: Netlify data.json 取得失敗 — イベントページ確認なしで続行');
   }
 
-  // イベントページが存在しないエントリを除外
+  // 過去イベント & ページ未デプロイのエントリを除外
+  const todayStr = new Date().toISOString().slice(0, 10);
   const verified = pending.filter((entry) => {
-    if (!liveEventIds) return true; // 取得失敗時はスキップしない
-    if (liveEventIds.has(entry.eventId)) return true;
-    log.warn(`  ⏭️ スキップ: ${entry.eventTitle} (@${entry.instagram}) — イベントページが未デプロイ`);
-    return false;
+    // 過去のイベントはスキップ
+    if (entry.eventDate && entry.eventDate < todayStr) {
+      log.warn(`  ⏭️ スキップ: ${entry.eventTitle} (@${entry.instagram}) — イベント終了済み (${entry.eventDate})`);
+      return false;
+    }
+    // イベントページの存在確認
+    if (liveEventIds && !liveEventIds.has(entry.eventId)) {
+      log.warn(`  ⏭️ スキップ: ${entry.eventTitle} (@${entry.instagram}) — イベントページが未デプロイ`);
+      return false;
+    }
+    return true;
   });
 
   if (!verified.length) {
