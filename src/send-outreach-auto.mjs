@@ -189,20 +189,12 @@ async function autoSend() {
 
         await messageInput.waitFor({ state: 'visible', timeout: 10000 });
 
-        // メッセージを入力（クリップボード経由でペースト）
+        // メッセージをクリップボード経由でペースト（fill/typeだと改行が壊れるため）
         const fullMessage = generateMessage(entry.exhibitorName, entry.eventTitle, entry.pageUrl);
-
-        // 行ごとに入力（Enterで改行、Shift+Enterで改行維持）
-        const lines = fullMessage.split('\n');
-        for (let li = 0; li < lines.length; li++) {
-          if (li > 0) {
-            await messageInput.press('Shift+Enter');
-          }
-          if (lines[li]) {
-            await messageInput.fill(''); // clear first
-            await messageInput.type(lines[li], { delay: 10 });
-          }
-        }
+        await page.evaluate((text) => navigator.clipboard.writeText(text), fullMessage);
+        await messageInput.click();
+        await page.keyboard.press('Meta+V');
+        await sleep(500);
 
         await sleep(1000);
 
