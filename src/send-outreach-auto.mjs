@@ -206,8 +206,9 @@ async function autoSend() {
 
         await sleep(1000);
 
-        // 送信ボタンを押す
-        const sendBtn = page.getByRole('button', { name: /send|送信/i });
+        // 送信ボタンを押す（exactで他のボタンとの誤マッチを防止）
+        const sendBtn = page.getByRole('button', { name: '送信', exact: true })
+          .or(page.getByRole('button', { name: 'Send', exact: true }));
         await sendBtn.click();
         await sleep(2000);
 
