@@ -13,7 +13,7 @@
 import { loadConfig } from './lib/config.js';
 import { SheetsStorage, HEADERS } from './storage/sheets.js';
 import { log } from './lib/logger.js';
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { chromium } from 'playwright';
 
@@ -208,6 +208,26 @@ async function autoSend() {
       }
 
       try {
+        // イベントページの表示確認（スクショ保存）
+        const verifyPage = await browser.newPage();
+        await verifyPage.goto(entry.pageUrl, { waitUntil: 'networkidle', timeout: 30000 });
+        await sleep(3000); // SPA描画待ち
+
+        const screenshotDir = join(ROOT, 'logs', 'outreach-screenshots');
+        mkdirSync(screenshotDir, { recursive: true });
+        const ssPath = join(screenshotDir, `${entry.eventId}_${handle}_${new Date().toISOString().slice(0, 10)}.png`);
+        await verifyPage.screenshot({ path: ssPath, fullPage: true });
+
+        // ページ内にイベントタイトルが表示されているか確認
+        const pageText = await verifyPage.textContent('body');
+        await verifyPage.close();
+
+        if (!pageText || !pageText.includes(entry.eventTitle)) {
+          log.warn(`  ⏭️ スキップ: イベントページが正しく表示されていません（スクショ: ${ssPath}）`);
+          continue;
+        }
+        log.info(`  ✅ ページ確認OK（スクショ: ${ssPath}）`);
+
         const page = await browser.newPage();
 
         // DMスレッドを開く
