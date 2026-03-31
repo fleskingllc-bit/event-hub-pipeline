@@ -145,9 +145,9 @@ async function autoSend() {
   // 過去イベント & ページ未デプロイのエントリを除外
   const todayStr = new Date().toISOString().slice(0, 10);
   const verified = pending.filter((entry) => {
-    // 過去のイベントはスキップ
-    if (entry.eventDate && entry.eventDate < todayStr) {
-      log.warn(`  ⏭️ スキップ: ${entry.eventTitle} (@${entry.instagram}) — イベント終了済み (${entry.eventDate})`);
+    // 当日以前のイベントはスキップ（DMは前日までに届けるべき）
+    if (entry.eventDate && entry.eventDate <= todayStr) {
+      log.warn(`  ⏭️ スキップ: ${entry.eventTitle} (@${entry.instagram}) — イベント当日or終了済み (${entry.eventDate})`);
       return false;
     }
     // イベントページの存在確認
