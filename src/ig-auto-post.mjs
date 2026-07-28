@@ -316,7 +316,7 @@ async function main() {
           deployed = deployToNetlify();
         }
         if (deployed) {
-          const storyUrl = getCaptureUrl(`${event.id}_story.png`);
+          const storyUrl = getCaptureUrl(`${event.id}_story.jpg`);
           const result = await postStory(storyUrl);
           log.info(`IG Post: ストーリー投稿成功（静止画） ${i + 1}/3`);
           if (!state.igPosted[event.id]) state.igPosted[event.id] = {};

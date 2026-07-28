@@ -7,7 +7,7 @@ import { log } from '../lib/logger.js';
 export class GeminiClient {
   constructor(config) {
     this.apiKey = config.gemini.apiKey;
-    this.model = config.gemini.model || 'gemini-2.0-flash';
+    this.model = config.gemini.model || 'gemini-2.5-flash';
     this.baseUrl = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${this.apiKey}`;
     this.maxRetries = config.scraping?.maxRetries || 3;
   }

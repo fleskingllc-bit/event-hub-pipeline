@@ -150,7 +150,7 @@ export function renderStoryVideo(eventId, props) {
     execSync(cmd, {
       cwd: ROOT,
       stdio: 'pipe',
-      timeout: 180000, // 3分タイムアウト
+      timeout: 360000, // 6分タイムアウト
       env: { ...process.env, PATH: process.env.PATH },
     });
     log.info(`IG Story Video: レンダリング完了 → ${outputPath}`);
@@ -330,7 +330,7 @@ export function renderReelVideo(eventId, props) {
     execSync(cmd, {
       cwd: ROOT,
       stdio: 'pipe',
-      timeout: 300000, // 5分タイムアウト（リールは長い）
+      timeout: 600000, // 10分タイムアウト（リールは長い）
       env: { ...process.env, PATH: process.env.PATH },
     });
     log.info(`IG Reel Video: レンダリング完了 → ${outputPath}`);

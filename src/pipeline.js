@@ -29,9 +29,19 @@ import { loadMasterDB, saveMasterDB, matchExhibitorsForEvent, matchOrRegister } 
 import { createRateLimiter } from './lib/rate-limiter.js';
 import { randomUUID } from 'crypto';
 import { join } from 'path';
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync } from 'fs';
 
 const ROOT = new URL('../', import.meta.url).pathname;
+
+// Apify SDK の長期接続が ECONNRESET 等で切れた際の floating promise rejection で
+// プロセスが落ちると、後続の Dedup/Geocoding/Sheets書き込みフェーズに到達できず
+// 取得済みイベントが失われる。ハンドラを登録して継続させる。
+process.on('unhandledRejection', (reason) => {
+  const msg = reason instanceof Error ? reason.message : String(reason);
+  const stack = reason instanceof Error && reason.stack ? reason.stack : '';
+  log.error(`Unhandled promise rejection (non-fatal): ${msg}`);
+  if (stack) log.error(stack);
+});
 
 const args = process.argv.slice(2);
 const sitesOnly = args.includes('--sites-only');
@@ -223,7 +233,12 @@ exhibitorsは記事中に固有名詞の店舗名・出展者名があれば抽�
   }
 
   // --- Instagram ---
-  if (!sitesOnly) {
+  // Apify free tier ($5/month) optimization: only run Instagram on --auto-approve (daily 6AM)
+  const skipInstagram = !autoApprove && !instagramOnly;
+  if (skipInstagram) {
+    log.info('Skipping Instagram (runs only on --auto-approve to conserve Apify quota)');
+  }
+  if (!sitesOnly && !skipInstagram) {
     try {
       log.info('--- Phase: Instagram scraping ---');
       const igPosts = await scrapeInstagram(config);
@@ -298,12 +313,41 @@ exhibitorsは記事中に固有名詞の店舗名・出展者名があれば抽�
   const deduped = await deduplicateEvents(allExtracted, config);
   log.info(`After dedup: ${deduped.length} events`);
 
+  // dedup(Gemini)が再構成したイベントはフィールド型が保証されないため正規化
+  const asStr = (v) => (typeof v === 'string' ? v : v == null ? '' : Array.isArray(v) ? v.filter(x => typeof x === 'string').join(' ') : String(v));
+  for (const ev of deduped) {
+    ev._caption = asStr(ev._caption);
+    ev._postingAccount = asStr(ev._postingAccount).toLowerCase();
+    if (!Array.isArray(ev.exhibitors)) ev.exhibitors = [];
+    ev.exhibitors = ev.exhibitors.filter(x => x && typeof x === 'object').map(x => ({
+      ...x,
+      name: asStr(x.name),
+      instagram: asStr(x.instagram),
+      category: asStr(x.category),
+      description: asStr(x.description),
+    }));
+  }
+
+  // チェックポイント保存（後段クラッシュ時に scrape/抽出/dedup をやり直さないための復旧用）
+  writeFileSync(join(ROOT, 'data', 'checkpoint-dedup.json'), JSON.stringify(deduped, null, 2));
+
   // --- Geocoding + Area mapping ---
   log.info('--- Phase: Geocoding ---');
   for (const event of deduped) {
     if (event.address && (!event.lat || !event.lng)) {
       const query = [event.location, event.address].filter(Boolean).join(' ');
-      const geo = await geocode(query);
+      // Nominatimは「会場名+住所」や番地付き住所に弱い — 3段フォールバック
+      // 1) 会場名+住所 → 2) 住所単独 → 3) 番地を除いた町名レベル
+      let geo = await geocode(query);
+      if (!geo && event.location) {
+        geo = await geocode(event.address);
+      }
+      if (!geo) {
+        const simplified = event.address.replace(/[0-9０-９].*$/, '').trim();
+        if (simplified && simplified !== event.address) {
+          geo = await geocode(simplified);
+        }
+      }
       if (geo) {
         event.lat = geo.lat;
         event.lng = geo.lng;
@@ -361,12 +405,14 @@ exhibitorsは記事中に固有名詞の店舗名・出展者名があれば抽�
     const event = deduped[i];
     const ids = [];
 
+    try {
     // --- A. Gemini-extracted exhibitors (all sources) ---
     if (event.exhibitors?.length) {
       // Extract @mentions from IG caption for enrichment
       let captionMentions = [];
       if (event.source === 'instagram') {
-        const caption = event._caption || '';
+        // dedup(Gemini)経由で _caption が文字列以外になるケースがあるため防御
+        const caption = String(event._caption || '');
         captionMentions = (caption.match(/@[\w.]+/g) || []).map(m => m.toLowerCase());
       }
 
@@ -412,7 +458,7 @@ exhibitorsは記事中に固有名詞の店舗名・出展者名があれば抽�
       }
 
       // --- C. @mentions from caption → exhibitors ---
-      const caption = event._caption || '';
+      const caption = String(event._caption || '');
       const mentions = (caption.match(/@[\w.]{2,}/g) || [])
         .map(m => m.toLowerCase())
         .filter((v, i, a) => a.indexOf(v) === i); // dedupe
@@ -434,6 +480,11 @@ exhibitorsは記事中に固有名詞の店舗名・出展者名があれば抽�
           if (masterDB.exhibitors.length > prevCount) newExhibitorCount.mentionRegistered++;
         }
       }
+    }
+
+    } catch (err) {
+      // 1イベントの不良データで全体を落とさない（イベント本体の書き込みは継続）
+      log.error(`Exhibitor matching failed for "${event.title}": ${err.message}`);
     }
 
     // Link master IDs to event row

@@ -232,7 +232,7 @@ export async function captureRepostImage(eventId, imageUrl, sourceAccount, index
 const STORY_VIEWPORT = { width: 270, height: 480 };
 
 export async function captureStoryImage(eventId, event, { force = false, sourceAccount = '' } = {}) {
-  const outputPath = join(CAPTURE_DIR, `${eventId}_story.png`);
+  const outputPath = join(CAPTURE_DIR, `${eventId}_story.jpg`);
   if (!force && existsSync(outputPath)) {
     console.log(`⏭️  ストーリー済み: ${eventId}`);
     return outputPath;
@@ -338,7 +338,7 @@ export async function captureStoryImage(eventId, event, { force = false, sourceA
     const page = await browser.newPage({ viewport: STORY_VIEWPORT, deviceScaleFactor: 4 });
     await page.setContent(html, { waitUntil: 'networkidle', timeout: 15000 });
     await page.waitForTimeout(500);
-    await page.screenshot({ path: outputPath });
+    await page.screenshot({ path: outputPath, type: 'jpeg', quality: 85 });
     console.log(`✅ ストーリー保存: ${outputPath}`);
     return outputPath;
   } finally {

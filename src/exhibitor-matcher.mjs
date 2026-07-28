@@ -22,7 +22,8 @@ const GENERIC_NAMES = new Set([
 
 function normalizeIG(ig) {
   if (!ig) return '';
-  return ig.replace(/^@+/, '').toLowerCase().trim();
+  // Gemini由来の値は型が保証されないため文字列に強制
+  return String(ig).replace(/^@+/, '').toLowerCase().trim();
 }
 
 function isValidName(name) {
@@ -66,7 +67,7 @@ function nextId(masterDB) {
  * @returns {{ matched: Object|null, score: number, isNew: boolean }}
  */
 export function matchExhibitor(extracted, masterDB) {
-  const name = (extracted.name || '').trim();
+  const name = String(extracted.name || '').trim();
   const ig = normalizeIG(extracted.instagram);
 
   if (!isValidName(name)) {
@@ -135,7 +136,7 @@ export function matchOrRegister(extracted, masterDB) {
       matched.description = extracted.description;
     }
     // Add name as alias if different
-    const name = (extracted.name || '').trim();
+    const name = String(extracted.name || '').trim();
     if (name && name !== matched.name && !(matched.aliases || []).includes(name)) {
       if (!matched.aliases) matched.aliases = [];
       matched.aliases.push(name);
@@ -148,7 +149,7 @@ export function matchOrRegister(extracted, masterDB) {
 
   // Register new exhibitor
   const id = nextId(masterDB);
-  const name = (extracted.name || '').trim();
+  const name = String(extracted.name || '').trim();
   masterDB.exhibitors.push({
     id,
     name,

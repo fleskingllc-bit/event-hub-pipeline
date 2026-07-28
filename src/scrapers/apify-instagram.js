@@ -16,7 +16,9 @@ function getTodayGroup(config) {
   if (!rotation?.enabled) return null;
 
   const dayOfYear = Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0)) / 86400000);
-  const groupKey = dayOfYear % 2 === 0 ? 'A' : 'B';
+  const groupCount = rotation.groupCount || Object.keys(rotation.groups).length;
+  const groupKeys = Object.keys(rotation.groups);
+  const groupKey = groupKeys[dayOfYear % groupCount];
   return rotation.groups[groupKey];
 }
 
@@ -75,7 +77,7 @@ export async function scrapeInstagram(config) {
 async function scrapeHashtag(client, hashtag) {
   const run = await client.actor('apify/instagram-hashtag-scraper').call({
     hashtags: [hashtag],
-    resultsLimit: 50,
+    resultsLimit: 20,
   });
 
   const { items } = await client.dataset(run.defaultDatasetId).listItems();
@@ -85,7 +87,7 @@ async function scrapeHashtag(client, hashtag) {
 async function scrapeProfile(client, username) {
   const run = await client.actor('apify/instagram-profile-scraper').call({
     usernames: [username],
-    resultsLimit: 30,
+    resultsLimit: 15,
   });
 
   const { items } = await client.dataset(run.defaultDatasetId).listItems();

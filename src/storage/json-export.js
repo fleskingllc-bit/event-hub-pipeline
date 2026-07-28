@@ -62,22 +62,29 @@ export async function exportToJson(storage, config) {
     }
   } catch { /* ignore */ }
 
-  // Validate coordinates — flag events outside Yamaguchi bounds
+  // Drop events outside Yamaguchi — by coords when available, else by address/area
   const YG = { latMin: 33.7, latMax: 34.55, lngMin: 130.7, lngMax: 132.4 };
-  for (const e of approvedEvents) {
-    if (!e.lat || !e.lng) continue;
-    const lat = parseFloat(e.lat);
-    const lng = parseFloat(e.lng);
-    if (lat < YG.latMin || lat > YG.latMax || lng < YG.lngMin || lng > YG.lngMax) {
-      log.warn(`⚠ ${e.id} "${e.title}" has coords outside Yamaguchi: (${lat}, ${lng})`);
+  const inYamaguchi = (e) => {
+    if (e.lat && e.lng) {
+      const lat = parseFloat(e.lat);
+      const lng = parseFloat(e.lng);
+      return lat >= YG.latMin && lat <= YG.latMax && lng >= YG.lngMin && lng <= YG.lngMax;
     }
-  }
+    if (e.address) return e.address.includes('山口県') || Boolean(e.area);
+    return true; // 住所も座標も無い場合は残す（area fallbackに委ねる）
+  };
+  const geoFiltered = approvedEvents.filter((e) => {
+    if (inYamaguchi(e)) return true;
+    log.warn(`⚠ dropped (outside Yamaguchi): ${e.id} "${e.title}" ${e.address || ''}`);
+    return false;
+  });
+  log.info(`Yamaguchi filter: ${geoFiltered.length}/${approvedEvents.length} events kept`);
 
   // Build exhibitor ID set for quick lookup
   const masterIdSet = new Set(uiExhibitors.map(e => e.id));
 
   // Transform events to UI format
-  const uiEvents = approvedEvents.map((e) => ({
+  const uiEvents = geoFiltered.map((e) => ({
     id: e.id,
     title: e.title,
     date: e.date,

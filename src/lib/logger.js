@@ -8,6 +8,10 @@ mkdirSync(LOG_DIR, { recursive: true });
 const levels = { DEBUG: 0, INFO: 1, WARN: 2, ERROR: 3 };
 let minLevel = levels.INFO;
 
+// EVENT_HUB_LOG_TAG が設定されていれば pipeline-{tag}-YYYY-MM-DD.log に出力。
+// 未設定なら従来通り pipeline-YYYY-MM-DD.log。
+const LOG_TAG = process.env.EVENT_HUB_LOG_TAG || '';
+
 function ts() {
   return new Date().toISOString();
 }
@@ -17,7 +21,11 @@ function write(level, ...args) {
   const msg = `[${ts()}] [${level}] ${args.join(' ')}`;
   console.log(msg);
 
-  const logFile = join(LOG_DIR, `pipeline-${new Date().toISOString().slice(0, 10)}.log`);
+  const date = new Date().toISOString().slice(0, 10);
+  const fileName = LOG_TAG
+    ? `pipeline-${LOG_TAG}-${date}.log`
+    : `pipeline-${date}.log`;
+  const logFile = join(LOG_DIR, fileName);
   appendFileSync(logFile, msg + '\n');
 }
 
